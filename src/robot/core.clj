@@ -8,7 +8,8 @@
 	   (com.amazonaws.mturk.requester AssignmentStatus)
 	   (org.apache.commons.beanutils BeanUtils))
   (:use [hiccup.core])
-  (:require [clojure.java.io]))
+  (:require [clojure.java.io]
+	    [clojure.string :as str]))
 
 (defn load-props
   [file-name]
@@ -50,24 +51,33 @@
 	service (new RequesterService client-config)]
 	service))
 
+(defn image [url]
+  (html
+   [:Binary
+    [:MimeType
+     [:Type "image"]
+     [:SubType (last (str/split url #"\."))]]
+    [:DataURL url]
+    [:AltText (last (str/split url #"\/"))]]))
+
 (defn list-question [question choices]
-  (let [prefix "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-                <QuestionForm xmlns=\"http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2005-10-01/QuestionForm.xsd\">"
-	suffix "</QuestionForm>"]
+  (let [prefix "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"]
     (str prefix
-	 (html [:Question
-	   [:QuestionIdentifier 1]
-	   [:QuestionContent [:Text question]]
-	   [:AnswerSpecification
-	    [:SelectionAnswer
-	     [:MinSelectionCount 1]
-	     [:MaxSelectionCount 1]
-	     [:StyleSuggestion "radiobutton"]
-	     [:Selections
-	      (for [x choices]
-		[:Selection
-		 [:SelectionIdentifier x]
-		 [:Text x]])]]]])
-	 suffix)))
+	 (html
+	  [:QuestionForm {:xmlns "http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2005-10-01/QuestionForm.xsd"}
+	   [:Question
+	    [:QuestionIdentifier 1]
+	    [:QuestionContent [:Text question]]
+	    [:AnswerSpecification
+	     [:SelectionAnswer
+	      [:MinSelectionCount 1]
+	      [:MaxSelectionCount 1]
+	      [:StyleSuggestion "radiobutton"]
+	      [:Selections
+	       (for [x choices]
+		 [:Selection
+		  [:SelectionIdentifier x]
+		  [:Text x]])]]]]])
+	 )))
 
 	      
