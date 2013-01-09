@@ -2,6 +2,17 @@
 
 This is still a work in progress
 
+## Getting Started
+
+Create file `resources/mturk.properties`
+
+In this file insert
+```
+access_key=YOUR_KEY
+secret_key=YOUR_SECRET
+service_url=https://mechanicalturk.sandbox.amazonaws.com/?Service=AWSMechanicalTurkRequester
+```
+
 ## Usage
 ```clojure
 user=> (use 'robot.core)
