@@ -15,8 +15,12 @@
                  [org.apache.commons/not-yet-commons-ssl "0.3.7"]
                  [commons-httpclient "3.1"]
 
+                 ;;TODO(Aaron): break these out into mastermind
+                 [com.novemberain/monger "1.4.2"]
+                 [com.cemerick/bandalore "0.0.3"]
+                 [cheshire "4.0.1"]
+
                  [clojure-opennlp "0.2.0"]
                  [log4j/log4j "1.2.16"]
                  [hiccup "1.0.2"]
-                 [com.novemberain/monger "1.4.2"]
                  [org.clojure/data.xml "0.0.7"]])

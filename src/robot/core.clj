@@ -34,7 +34,11 @@
     (throw (IllegalArgumentException. "Your MTurk service must be initialized using 'mturk!'"))))
 
 (defn- val->kwd [o]
-  (-> o .getValue keyword))
+  (when o
+      (-> o .getValue keyword)))
+
+(defn safe-int [I]
+  (when I (.intValue I)))
 
 (defn caltime
   "Returns time in millis from Calendar cal, or nil if cal is nil."
@@ -65,9 +69,9 @@
 (defn hit-m [h]
   {:hit-id           (.getHITId h)
    :duration-secs    (.getAssignmentDurationInSeconds h)
-   :created-at       (.getTimeInMillis (.getCreationTime h))
+   :created-at       (caltime (.getCreationTime h))
    :description      (.getDescription h)
-   :expiration       (.getTimeInMillis (.getExpiration h))
+   :expiration       (caltime (.getExpiration h))
    :group-id         (.getHITGroupId h)
    :layout-id        (.getHITLayoutId h)
    :review-status    (val->kwd (.getHITReviewStatus h))
@@ -77,13 +81,15 @@
    :max-assignments  (.getMaxAssignments h)
    ;; TODO: .getQualificationRequirement
    :question-xml     (.getQuestion h)
-   :reward           (.floatValue (.getAmount (.getReward h)))
+   :reward           (defn reward->float-amt [reward]
+                       (when-let [reward (.getReward h)]
+                         (.floatValue (.getAmount reward))))
    :title            (.getTitle h)
    :auto-approval-delay-secs  (.getAutoApprovalDelayInSeconds h)
    :requester-annotation      (.getRequesterAnnotation h)
-   :num-assignments-available (.intValue (.getNumberOfAssignmentsAvailable h))
-   :num-assignments-completed (.intValue (.getNumberOfAssignmentsCompleted h))
-   :num-assignments-pending   (.intValue (.getNumberOfAssignmentsPending h))})
+   :num-assignments-available (safe-int (.getNumberOfAssignmentsAvailable h))
+   :num-assignments-completed (safe-int (.getNumberOfAssignmentsCompleted h))
+   :num-assignments-pending   (safe-int (.getNumberOfAssignmentsPending h))})
 
 (defn get-assignments
   "Fetches and returns assignments for the specified hit-id. Returns
@@ -105,6 +111,29 @@
 (defn set-notification [hit-type-id notification active]
   (.setHITTypeNotification (service) hit-type-id notification active))
 
+(def EVENT-TYPES
+  {:AssignmentAccepted   EventType/AssignmentAccepted
+   :AssignmentAbandoned  EventType/AssignmentAbandoned
+   :AssignmentReturned   EventType/AssignmentReturned
+   :AssignmentSubmitted  EventType/AssignmentSubmitted
+   :HITExpired           EventType/HITExpired
+   :HITReviewable        EventType/HITReviewable
+  ;; :Ping                 EventType/Ping
+
+   })
+
+(defn event-type-for [kwd]
+  (if-let [etype (EVENT-TYPES kwd)]
+    etype
+    (throw (RuntimeException. (str "Unrecognized event type keyword: " kwd)))))
+
+(defn java-event-types
+  "Given types as keywords like :HITReviewable, returns the typed
+   Java array required by the SDK for doing things like creating
+   a NotificationSpecification."
+  [types]
+  (into-array EventType (map event-type-for types)))
+
 ;; convenience function to create a Java array of EventTypes
 ;; TODO: please tell me there's a better way!
 (defn event-types [etypes-in]
@@ -118,20 +147,23 @@
    SQS queue url. You will need to setup and configure your AWS SQS.
      http://docs.aws.amazon.com/AWSMechTurk/latest/AWSMturkAPI/ApiReference_NotificationReceptorAPI_SQSTransportArticle.html
 
-   TODO: currently only one hard-coded event type"
+   TODO: support specifying the event types. right now it's ALL"
   [hit-type-id queue-url]
   (let [notify (NotificationSpecification.
                 queue-url
                 NotificationTransport/SQS
                 WSDL-SCHEMA-VER
-                (event-types [EventType/HITReviewable]))]
+                (event-types (mapv val EVENT-TYPES)))]
     (set-notification hit-type-id notify true)))
 
 (defn get-all-hits []
   (map hit-m (.searchAllHITs (service))))
 
-(defn get-reviewable-hits []
-  (.getAllReviewableHITs (service) "type"))
+(defn get-all-assignments []
+  (mapcat get-assignments (map :hit-id (get-all-hits))))
+
+(defn get-reviewable-hits [hit-type-id]
+  (.getAllReviewableHITs (service) hit-type-id))
 
 (defn clear-hits []
   (map (fn [x] (.disableHIT (service) (.getHITId x)))
@@ -147,10 +179,11 @@
       (do (approve-assignment service (.getAssignmentId assign))
     (.getAnswer assign)))))
 
-(defn start-service []
-  (let [client-config (new PropertiesClientConfig "resources/mturk.properties")
-  service (new RequesterService client-config)]
-  service))
+;;
+;; Break out all XML building into a different namespace
+;;
+
+(def XML-PREFIX "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
 
 (defn image [url]
   (html
@@ -162,21 +195,54 @@
     [:AltText (last (str/split url #"\/"))]]))
 
 (defn list-question [question choices]
-  (let [prefix "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"]
-    (str prefix
-   (html
-    [:QuestionForm {:xmlns "http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2005-10-01/QuestionForm.xsd"}
-     [:Question
-      [:QuestionIdentifier 1]
-      [:QuestionContent [:Text question]]
-      [:AnswerSpecification
-       [:SelectionAnswer
-        [:MinSelectionCount 1]
-        [:MaxSelectionCount 1]
-        [:StyleSuggestion "radiobutton"]
-        [:Selections
-         (for [x choices]
-     [:Selection
-      [:SelectionIdentifier x]
-      [:Text x]])]]]]])
-   )))
+  (str XML-PREFIX
+       (html
+        [:QuestionForm {:xmlns "http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2005-10-01/QuestionForm.xsd"}
+         [:Question
+          [:QuestionIdentifier 1]
+          [:QuestionContent [:Text question]]
+          [:AnswerSpecification
+           [:SelectionAnswer
+            [:MinSelectionCount 1]
+            [:MaxSelectionCount 1]
+            [:StyleSuggestion "radiobutton"]
+            [:Selections
+             (for [x choices]
+               [:Selection
+                [:SelectionIdentifier x]
+                [:Text x]])]]]]])))
+
+(defn simple-formatted-content-question [formatted-content]
+  (str XML-PREFIX
+       (html
+        [:QuestionForm {:xmlns "http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2005-10-01/QuestionForm.xsd"}
+         [:Question
+          [:QuestionIdentifier 1]
+          [:QuestionContent
+           [:FormattedContent
+            (format "<![CDATA[%s]]>" formatted-content)]]
+          [:AnswerSpecification
+           [:FreeTextAnswer
+            ;;[:Constraints [:Length {:minLength 1 :maxLength 32}]]
+            [:NumberOfLinesSuggestion 1]]]]])))
+
+(defn post-simple-hit
+  "Posts a simple HIT to MTurk and returns the HIT data, including :hit-id.
+
+   The instructions will appear above the form field, and can be formatted HTML content."
+  [{:keys [title description price instructions max-assignments]}]
+  (hit-m
+   (create-hit (service)
+               title
+               description
+               price
+               (simple-formatted-content-question instructions)
+               max-assignments)))
+
+(defn go! []
+  (post-simple-hit
+   {:title "My Title"
+    :description "My Desc"
+    :price 0.05
+    :instructions "my <b>bold</b> instructions"
+    :max-assignments 1}))
