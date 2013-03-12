@@ -45,7 +45,6 @@
   [cal]
   (when cal (.getTimeInMillis cal)))
 
-;;TODO: handle nulls, like timestamps
 (defn assignment-m
   "Returns a hash-map built from the data in assignment a, which is
    expected to be a com.amazonaws.mturk.requester.Assignment."
@@ -76,14 +75,13 @@
    :layout-id        (.getHITLayoutId h)
    :review-status    (val->kwd (.getHITReviewStatus h))
    :status           (val->kwd (.getHITStatus h))
-   :type-id          (.getHITTypeId h)
+   :hit-type-id      (.getHITTypeId h)
    :keywords         (.getKeywords h)
    :max-assignments  (.getMaxAssignments h)
    ;; TODO: .getQualificationRequirement
    :question-xml     (.getQuestion h)
-   :reward           (defn reward->float-amt [reward]
-                       (when-let [reward (.getReward h)]
-                         (.floatValue (.getAmount reward))))
+   :reward           (when-let [reward (.getReward h)]
+                         (.floatValue (.getAmount reward)))
    :title            (.getTitle h)
    :auto-approval-delay-secs  (.getAutoApprovalDelayInSeconds h)
    :requester-annotation      (.getRequesterAnnotation h)
@@ -112,15 +110,15 @@
   (.setHITTypeNotification (service) hit-type-id notification active))
 
 (def EVENT-TYPES
-  {:AssignmentAccepted   EventType/AssignmentAccepted
+  {;;:Ping                 EventType/Ping
+   :AssignmentAccepted   EventType/AssignmentAccepted
    :AssignmentAbandoned  EventType/AssignmentAbandoned
    :AssignmentReturned   EventType/AssignmentReturned
    :AssignmentSubmitted  EventType/AssignmentSubmitted
    :HITExpired           EventType/HITExpired
-   :HITReviewable        EventType/HITReviewable
-  ;; :Ping                 EventType/Ping
+   :HITReviewable        EventType/HITReviewable})
 
-   })
+(def ALL-EVENT-TYPES (map first EVENT-TYPES))
 
 (defn event-type-for [kwd]
   (if-let [etype (EVENT-TYPES kwd)]
@@ -139,7 +137,7 @@
 (defn event-types [etypes-in]
   (let [etypes-out (make-array EventType (count etypes-in))]
     (doseq [i (range (count etypes-in))]
-      (aset etypes-out i (get etypes-in i)))
+      (aset etypes-out i (EVENT-TYPES (get etypes-in i))))
     etypes-out))
 
 (defn activate-sqs-notification
@@ -147,14 +145,19 @@
    SQS queue url. You will need to setup and configure your AWS SQS.
      http://docs.aws.amazon.com/AWSMechTurk/latest/AWSMturkAPI/ApiReference_NotificationReceptorAPI_SQSTransportArticle.html
 
-   TODO: support specifying the event types. right now it's ALL"
-  [hit-type-id queue-url]
-  (let [notify (NotificationSpecification.
-                queue-url
-                NotificationTransport/SQS
-                WSDL-SCHEMA-VER
-                (event-types (mapv val EVENT-TYPES)))]
-    (set-notification hit-type-id notify true)))
+   etypes should be an array of keywords indicating the desired notification event types, e.g.:
+     [:AssignmentAccepted :AssignmentSubmitted]
+
+   The variation that takes no etypes will set notification for ALL event types."
+  ([hit-type-id queue-url etypes]
+      (let [notify (NotificationSpecification.
+                    queue-url
+                    NotificationTransport/SQS
+                    WSDL-SCHEMA-VER
+                    (event-types etypes))]
+        (set-notification hit-type-id notify true)))
+  ([hit-type-id queue-url]
+     (activate-sqs-notification hit-type-id queue-url ALL-EVENT-TYPES)))
 
 (defn get-all-hits []
   (map hit-m (.searchAllHITs (service))))
@@ -238,11 +241,3 @@
                price
                (simple-formatted-content-question instructions)
                max-assignments)))
-
-(defn go! []
-  (post-simple-hit
-   {:title "My Title"
-    :description "My Desc"
-    :price 0.05
-    :instructions "my <b>bold</b> instructions"
-    :max-assignments 1}))
